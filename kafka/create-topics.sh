@@ -27,7 +27,9 @@ auth=()
 [ -n "$KAFKA_COMMAND_CONFIG" ] && auth=(--command-config "$KAFKA_COMMAND_CONFIG")
 
 # Dead letters keep longer than their source topic, so a failure is still there after a weekend.
-# Staging overrides this to 7 days because the VM's disk is small; deploy.sh exports it.
+# Staging overrides this to 7 days (SCRUM-110 AC3); azure/kafka-vm/docker-compose.yml sets it for
+# the staging kafka-init. Set it on every staging run: this script re-applies retention, so a run
+# without it would put the staging dead-letter topics back to 30 days.
 DLQ_RETENTION_MS="${DLQ_RETENTION_MS:-2592000000}"
 
 # The definitions live next to this script, so running it from anywhere still finds them.
