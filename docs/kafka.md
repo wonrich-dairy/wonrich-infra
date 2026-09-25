@@ -12,8 +12,8 @@ Apache Kafka is the event bus between the Wonrich microservices. Services publis
 | Dead-letter topic | `wonrich.dlq.<consumer group>.v<version>`, **one per consumer group** |
 | Message key | The business identifier the events relate to (e.g. `batchId`), so events for one entity stay in order |
 | Partitions | 3 on event topics, 1 on dead-letter topics |
-| Retention | 7 days on event topics, 30 days on dead-letter topics (local) |
-| Replication factor | 1 locally (single broker) |
+| Retention | 7 days on event topics; dead-letter topics 30 days locally, 7 days on staging |
+| Replication factor | 1 (single broker, locally and on staging) |
 | Consumer group | Named after the consuming service and what it consumes; one group per service, never shared |
 | Topic creation | Explicit only (`topics.env`). Automatic topic creation is disabled on the broker |
 
@@ -42,19 +42,17 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 
 ### Dead-letter topics
 
-| Topic | For consumer group | Partitions | Retention (local) |
+| Topic | For consumer group | Partitions | Retention |
 |---|---|---|---|
 | `wonrich.dlq.processing-lab-results.v1` | `processing-lab-results` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.processing-stage-events.v1` | `processing-stage-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.processing-hold-events.v1` | `processing-hold-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.quality-lab-stage-events.v1` | `quality-lab-stage-events` | 1 | 30 days (7 on staging) |
 
----
-Dead-letter topics have **one partition**: they are low volume and nothing
-consumes them in order, so partitioning buys nothing. Retention is longer than
-the source topic so a failed message is still there after a weekend; staging
-uses 7 days because the VM's disk is small. Set it with
-`DLQ_RETENTION_MS=604800000 ./create-topics.sh` — `deploy.sh` exports it.
+Dead-letter topics have **one partition**: they are low volume and nothing consumes them in order, so partitioning buys nothing.
+
+Retention is longer than the source topic locally, so a failed message is still there after a weekend. Staging keeps dead letters for 7 days, as SCRUM-110 AC3 specifies. `topics.env` holds the local values; `create-topics.sh` replaces the dead-letter value with `DLQ_RETENTION_MS` when it is set, and the staging `kafka-init` (`azure/kafka-vm/docker-compose.yml`) sets it to `604800000`.
+
 ---
 
 ## Consumer groups
@@ -66,7 +64,7 @@ uses 7 days because the VM's disk is small. Set it with
 | `processing-hold-events` | Processing Service | `wonrich.processing.hold-events.v1` | `wonrich.dlq.processing-hold-events.v1` |
 | `quality-lab-stage-events` | Quality Lab Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.quality-lab-stage-events.v1` |
 
-On the local broker, a consumer group is created automatically the first time a consumer connects with that group ID. On Azure Event Hubs, consumer groups must be declared explicitly (see [Hosted broker](#hosted-broker)).
+A consumer group is created by the broker the first time a consumer connects with that group ID, locally and on staging. It does not appear in `kafka-consumer-groups.sh --list` until then.
 
 Traceability & QC Dashboard Service consumer groups will be added here when that service's consumers are defined.
 
@@ -118,23 +116,67 @@ echo '{"batchId":"WR-2609-0001","stage":"ReadyForFinalTesting"}' | docker exec -
 
 ---
 
-## Hosted broker
+## Hosted broker (staging)
 
-The deployed services on Azure App Service need a broker reachable from Azure. **The hosting option has not been decided yet.**
+The deployed services on Azure App Service use a single Kafka broker running on an Azure VM: the same `apache/kafka` image as local development, with an extra listener for clients outside the VM.
 
-| Option | Notes |
+Azure Event Hubs was considered and ruled out: its Kafka endpoint needs a Standard-tier namespace, which the team's Azure for Students subscription does not include.
+
+| Item | Value |
 |---|---|
-| Azure Event Hubs (Standard tier) | Managed; speaks the Kafka protocol. Basic tier does not support Kafka. Retention capped at 7 days, so dead-letter topics keep 7 days instead of 30. Consumer groups must be declared per event hub. |
-| Apache Kafka on an Azure VM | Same `apache/kafka` image as local development. Self-managed (networking, authentication, uptime). |
+| Host | `wonrich-kafka.southeastasia.cloudapp.azure.com` |
+| VM | `Standard_B2ls_v2`, Southeast Asia |
+| Client listener | `9094`, SASL_PLAINTEXT with SASL/PLAIN |
+| Internal listener | `9092`, PLAINTEXT, reachable only inside the VM's Docker network (used by `kafka-init`) |
+| Topics | Created from `kafka/topics.env` by `kafka-init`, dead-letter retention 7 days |
 
-Whichever is chosen, the topic names, partitions and consumer groups in this document stay the same; only the bootstrap address and security settings differ.
+### Provisioning
 
-If Event Hubs is chosen, `azure/eventhubs.sh` provisions the topics from `kafka/topics.env`. Each service's App Service then needs these settings:
+Scripted and repeatable; both scripts are safe to re-run.
+
+```bash
+az login
+./azure/kafka-vm/provision.sh                 # VM, public IP with DNS name, NSG rules
+./azure/kafka-vm/deploy.sh <vm-fqdn>          # Docker, broker, topics, SASL credentials
+```
+
+`deploy.sh` copies `topics.env` and `create-topics.sh` to the VM and starts the broker; `kafka-init` then creates any missing topics and applies retention. Re-run it after changing `topics.env`. On the first run it generates the SASL password and prints it once; it is never stored in this repository.
+
+To run the topic script from your own machine instead, with a client config file holding the SASL settings:
+
+```bash
+docker run --rm \
+  -v "$PWD/kafka:/scripts:ro" \
+  -v /tmp/staging.properties:/tmp/staging.properties:ro \
+  -e KAFKA_BOOTSTRAP=wonrich-kafka.southeastasia.cloudapp.azure.com:9094 \
+  -e KAFKA_COMMAND_CONFIG=/tmp/staging.properties \
+  -e DLQ_RETENTION_MS=604800000 \
+  apache/kafka:3.9.1 bash /scripts/create-topics.sh
+```
+
+### Service settings
+
+Each service's App Service needs:
 
 | Setting | Value |
 |---|---|
-| `Kafka__BootstrapServers` | `<namespace>.servicebus.windows.net:9093` |
-| `Kafka__SecurityProtocol` | `SaslSsl` |
+| `Kafka__BootstrapServers` | `wonrich-kafka.southeastasia.cloudapp.azure.com:9094` |
+| `Kafka__SecurityProtocol` | `SaslPlaintext` |
 | `Kafka__SaslMechanism` | `Plain` |
-| `Kafka__SaslUsername` | `$ConnectionString` |
-| `Kafka__SaslPassword` | Connection string of a Send + Listen authorization rule (not Manage) |
+| `Kafka__SaslUsername` | `wonrich` |
+| `Kafka__SaslPassword` | Shared privately by DevOps. Never in git, Jira or the group chat |
+
+### Access control
+
+- The client listener accepts authenticated SASL connections only; there is no anonymous access from outside the VM.
+- The credential lives in App Service settings and .NET user secrets, never in a repository.
+- No authorizer is configured, so an authenticated client has full rights on the broker, including creating topics and changing their configuration. This is how `create-topics.sh` can run against staging from a laptop. See known limitations.
+
+### Known limitations
+
+Accepted for the case-study environment, which carries no real data. The VM is deleted after the final evaluation.
+
+- **No encryption in transit.** SASL_PLAINTEXT authenticates clients but does not encrypt traffic. Follow-up: SASL_SSL.
+- **One shared credential with full rights, no ACLs.** Every service uses the same SASL user, and without an authorizer that user can produce, consume and administer every topic. Follow-up: enable the KRaft `StandardAuthorizer`, one user per service, and ACLs granting each only the topics it produces to and consumes from, the self-hosted equivalent of separate Send and Listen rules.
+- **Port 9094 open to all source addresses**, because App Service outbound IPs are shared and change.
+- **Single broker**, no replication. A VM restart makes the broker unavailable for about a minute; producers retry.

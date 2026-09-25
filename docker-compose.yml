@@ -22,8 +22,8 @@ services:
       # localhost, or every produce call fails immediately after a successful metadata fetch.
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_HOST_PORT:-29092}
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      # One broker has nowhere to replicate to, so every replication factor must be 1. Staging
-      # uses Event Hubs, which handles its own replication.
+      # One broker has nowhere to replicate to, so every replication factor must be 1. The staging
+      # broker on the Azure VM (azure/kafka-vm) is a single broker too.
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1

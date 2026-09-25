@@ -20,7 +20,12 @@ wonrich-infra/
 ├── docker-compose.yml        # Local Kafka broker, topic creation, Kafka UI
 ├── kafka/
 │   ├── topics.env            # Single definition of every topic
+│   ├── consumer-groups.env   # Consumer group per topic (reference)
 │   └── create-topics.sh      # Creates the topics on a broker (idempotent)
+├── azure/kafka-vm/
+│   ├── provision.sh          # Creates the staging VM, public IP and NSG rules
+│   ├── deploy.sh             # Installs Docker, starts the broker, creates topics
+│   └── docker-compose.yml    # Staging broker with the SASL listener on 9094
 └── docs/
     └── kafka.md              # Topics, consumer groups, conventions
 ```
@@ -101,6 +106,12 @@ When running a service outside Docker (`dotnet run`), use `localhost:29092`.
 2. Update the tables in `docs/kafka.md`.
 3. Run `docker compose up -d`. `kafka-init` creates the new topic and leaves existing ones untouched.
 4. Open a pull request. Topic changes affect every service, so they need review.
+
+---
+
+## Staging broker
+
+Deployed services use the shared broker on an Azure VM, provisioned by the scripts in `azure/kafka-vm/`. Connection settings, provisioning steps and known limitations are in [docs/kafka.md](docs/kafka.md#hosted-broker-staging).
 
 ---
 
