@@ -44,11 +44,17 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 
 | Topic | For consumer group | Partitions | Retention (local) |
 |---|---|---|---|
-| `wonrich.dlq.processing-lab-results.v1` | `processing-lab-results` | 1 | 30 days |
-| `wonrich.dlq.processing-stage-events.v1` | `processing-stage-events` | 1 | 30 days |
-| `wonrich.dlq.processing-hold-events.v1` | `processing-hold-events` | 1 | 30 days |
-| `wonrich.dlq.quality-lab-stage-events.v1` | `quality-lab-stage-events` | 1 | 30 days |
+| `wonrich.dlq.processing-lab-results.v1` | `processing-lab-results` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.processing-stage-events.v1` | `processing-stage-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.processing-hold-events.v1` | `processing-hold-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.quality-lab-stage-events.v1` | `quality-lab-stage-events` | 1 | 30 days (7 on staging) |
 
+---
+Dead-letter topics have **one partition**: they are low volume and nothing
+consumes them in order, so partitioning buys nothing. Retention is longer than
+the source topic so a failed message is still there after a weekend; staging
+uses 7 days because the VM's disk is small. Set it with
+`DLQ_RETENTION_MS=604800000 ./create-topics.sh` — `deploy.sh` exports it.
 ---
 
 ## Consumer groups
