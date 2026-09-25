@@ -39,7 +39,7 @@ REPLICATION="${KAFKA_REPLICATION_FACTOR:-1}"
 
 echo "== creating topics on $KAFKA_BOOTSTRAP"
 
-while IFS=: read -r name partitions retention; do
+while IFS=: read -r name partitions retention || [ -n "$name" ]; do
   # Skip blank lines and comments.
   case "${name# }" in ''|'#'*) continue ;; esac
 
