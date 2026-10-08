@@ -24,8 +24,9 @@ wonrich-infra/
 │   └── create-topics.sh      # Creates the topics on a broker (idempotent)
 ├── azure/kafka-vm/
 │   ├── provision.sh          # Creates the staging VM, public IP and NSG rules
-│   ├── deploy.sh             # Installs Docker, starts the broker, creates topics
-│   └── docker-compose.yml    # Staging broker with the SASL listener on 9094
+│   ├── deploy.sh             # Installs Docker, starts a broker, creates topics (ENV=prod for production)
+│   ├── docker-compose.yml    # Staging broker with the SASL listener on 9094
+│   └── docker-compose.prod.yml  # Production broker with the SASL listener on 9095
 └── docs/
     └── kafka.md              # Topics, consumer groups, conventions
 ```
@@ -109,9 +110,9 @@ When running a service outside Docker (`dotnet run`), use `localhost:29092`.
 
 ---
 
-## Staging broker
+## Staging and production brokers
 
-Deployed services use the shared broker on an Azure VM, provisioned by the scripts in `azure/kafka-vm/`. Connection settings, provisioning steps and known limitations are in [docs/kafka.md](docs/kafka.md#hosted-broker-staging).
+Deployed services use two independent brokers on one Azure VM: staging on port 9094 and production on port 9095, provisioned by the scripts in `azure/kafka-vm/`. Connection settings, provisioning steps and known limitations are in [docs/kafka.md](docs/kafka.md#hosted-brokers-staging-and-production).
 
 ---
 
