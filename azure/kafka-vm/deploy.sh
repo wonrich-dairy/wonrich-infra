@@ -61,14 +61,17 @@ ssh "$REMOTE" "FQDN='$FQDN' ENV_FILE='$ENV_FILE' bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 cd ~/kafka
 if [ ! -f "$ENV_FILE" ]; then
-  PASSWORD=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)
+  # '|| true': head closes the pipe after 32 characters, which makes tr exit 141, and pipefail
+  # would end the script silently right here.
+  PASSWORD=$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32 || true)
   {
     echo "KAFKA_PUBLIC_HOST=$FQDN"
     echo "KAFKA_USERNAME=wonrich"
     echo "KAFKA_PASSWORD=$PASSWORD"
     if [ "$ENV_FILE" = .env.prod ]; then
-      # Production must not share the staging broker's cluster ID.
-      echo "KAFKA_CLUSTER_ID=$(sg docker -c 'docker run --rm apache/kafka:3.9.1 /opt/kafka/bin/kafka-storage.sh random-uuid')"
+      # Production must not share the staging broker's cluster ID. < /dev/null: without it docker
+      # reads the rest of this script from stdin and the file is never finished.
+      echo "KAFKA_CLUSTER_ID=$(sg docker -c 'docker run --rm apache/kafka:3.9.1 /opt/kafka/bin/kafka-storage.sh random-uuid' < /dev/null)"
     fi
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
