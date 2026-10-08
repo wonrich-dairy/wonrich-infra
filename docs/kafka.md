@@ -37,6 +37,7 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 | `wonrich.processing.stage-events.v1` | Processing Service | Processing stage events (incl. run ready for final testing) | `batchId` | 3 | 7 days |
 | `wonrich.processing.hold-events.v1` | Processing Service | Batch hold events | `batchId` | 3 | 7 days |
 | `wonrich.quality-lab.batch-determinations.v1` | Quality Lab Service | `BatchCleared`, `BatchFailed` | `batchId` | 3 | 7 days |
+| `wonrich.intake.consignment-tested.v1` | MCC & Intake Service | `ConsignmentTested` (SCRUM-141) | `batchId` | 3 | 7 days |
 
 `wonrich.quality-lab.batch-determinations.v1` carries both outcomes on one topic. Each message includes an event-type field so consumers can distinguish `BatchCleared` from `BatchFailed`.
 
@@ -48,6 +49,10 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 | `wonrich.dlq.processing-stage-events.v1` | `processing-stage-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.processing-hold-events.v1` | `processing-hold-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.quality-lab-stage-events.v1` | `quality-lab-stage-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.traceability-stage-events.v1` | `traceability-stage-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.traceability-hold-events.v1` | `traceability-hold-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.traceability-batch-determinations.v1` | `traceability-batch-determinations` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.traceability-consignment-tested.v1` | `traceability-consignment-tested` | 1 | 30 days (7 on staging) |
 
 Dead-letter topics have **one partition**: they are low volume and nothing consumes them in order, so partitioning buys nothing.
 
@@ -64,10 +69,16 @@ Retention is longer than the source topic locally, so a failed message is still 
 | `processing-hold-events` | Processing Service | `wonrich.processing.hold-events.v1` | `wonrich.dlq.processing-hold-events.v1` |
 | `quality-lab-stage-events` | Quality Lab Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.quality-lab-stage-events.v1` |
 | `quality-lab-observability` | Quality Lab Service (monitoring listener) | `wonrich.processing.stage-events.v1` | none: passive, never commits offsets or dead-letters |
+| `traceability-stage-events` | Traceability Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.traceability-stage-events.v1` |
+| `traceability-hold-events` | Traceability Service | `wonrich.processing.hold-events.v1` | `wonrich.dlq.traceability-hold-events.v1` |
+| `traceability-batch-determinations` | Traceability Service | `wonrich.quality-lab.batch-determinations.v1` | `wonrich.dlq.traceability-batch-determinations.v1` |
+| `traceability-consignment-tested` | Traceability Service | `wonrich.intake.consignment-tested.v1` | `wonrich.dlq.traceability-consignment-tested.v1` |
 
 A consumer group is created by the broker the first time a consumer connects with that group ID, locally and on staging. It does not appear in `kafka-consumer-groups.sh --list` until then.
 
-Traceability & QC Dashboard Service consumer groups will be added here when that service's consumers are defined.
+Traceability reads a batch's whole path, so it consumes from three producers: Processing (stage and hold events), Quality Lab (determinations) and MCC & Intake (`ConsignmentTested`, SCRUM-141).
+
+**Retention and rebuilds:** event topics keep 7 days. Rebuilding Traceability's projection (SCRUM-140) replays events from Kafka, so it can only go back 7 days unless retention is raised for those topics.
 
 ---
 
