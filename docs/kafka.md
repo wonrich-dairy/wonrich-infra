@@ -48,6 +48,8 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 | `wonrich.dlq.processing-stage-events.v1` | `processing-stage-events` | 1 | 30 days |
 | `wonrich.dlq.processing-hold-events.v1` | `processing-hold-events` | 1 | 30 days |
 | `wonrich.dlq.quality-lab-stage-events.v1` | `quality-lab-stage-events` | 1 | 30 days |
+| `wonrich.dlq.quality-lab-determinations.v1` | Producer-side: Quality Lab events that exhausted outbox retries (SCRUM-24) | 1 | 30 days |
+| `wonrich.dlq.processing-batch-determinations.v1` | `processing-batch-determinations` | 1 | 30 days |
 
 ---
 
@@ -59,6 +61,7 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 | `processing-stage-events` | Processing Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.processing-stage-events.v1` |
 | `processing-hold-events` | Processing Service | `wonrich.processing.hold-events.v1` | `wonrich.dlq.processing-hold-events.v1` |
 | `quality-lab-stage-events` | Quality Lab Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.quality-lab-stage-events.v1` |
+| `processing-batch-determinations` | Processing Service | `wonrich.quality-lab.batch-determinations.v1` | `wonrich.dlq.processing-batch-determinations.v1` |
 
 On the local broker, a consumer group is created automatically the first time a consumer connects with that group ID. On Azure Event Hubs, consumer groups must be declared explicitly (see [Hosted broker](#hosted-broker)).
 
