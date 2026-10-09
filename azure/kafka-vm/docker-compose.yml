@@ -1,0 +1,74 @@
+# Wonrich shared Kafka broker, hosted on an Azure VM.
+# Copied to the VM at ~/kafka/docker-compose.yml by azure/kafka-vm/deploy.sh.
+#
+# Two listeners:
+#   INTERNAL (9092, PLAINTEXT)      - only inside this compose network, used by kafka-init
+#   EXTERNAL (9094, SASL_PLAINTEXT) - reached over the internet by the Azure App Services,
+#                                     protected by a SASL/PLAIN username and password and by
+#                                     the network security group rule on port 9094
+#
+# Values come from the .env file next to this file (never committed).
+name: wonrich-kafka
+
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: wonrich-kafka
+    hostname: kafka
+    restart: unless-stopped
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://${KAFKA_PUBLIC_HOST}:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:SASL_PLAINTEXT
+
+      # SASL/PLAIN on the external listener only.
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_LISTENER_NAME_EXTERNAL_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG: |
+        org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME}" password="${KAFKA_PASSWORD}" user_${KAFKA_USERNAME}="${KAFKA_PASSWORD}";
+
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-4L6g3nShT-eMCtK--X86sw}
+      # The VM is small; cap the JVM heap so the broker cannot exhaust its memory.
+      KAFKA_HEAP_OPTS: -Xmx512m -Xms512m
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  # Creates the Wonrich topics from topics.env over the internal listener, then exits.
+  kafka-init:
+    image: apache/kafka:3.9.1
+    container_name: wonrich-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./kafka:/infra:ro
+    entrypoint: ["/bin/bash", "/infra/create-topics.sh"]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      # Staging keeps dead letters for 7 days (SCRUM-110 AC3); local keeps 30. create-topics.sh
+      # re-applies retention on every run, so without this a redeploy would reset it to 30 days.
+      DLQ_RETENTION_MS: "604800000"
+    restart: "no"
+
+volumes:
+  kafka-data:

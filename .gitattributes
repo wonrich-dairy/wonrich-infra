@@ -1,0 +1,9 @@
+# Keep LF line endings on files that Linux containers read or execute.
+# Git for Windows defaults to core.autocrlf=true. A CRLF create-topics.sh fails in the kafka-init
+# container on "set -euo pipefail\r", and no topics are created.
+* text=auto
+*.sh          text eol=lf
+*.env         text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+*.properties  text eol=lf
