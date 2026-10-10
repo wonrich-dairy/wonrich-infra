@@ -35,20 +35,24 @@ fi
 FQDN=$(az vm show -d --name "$VM_NAME" --resource-group "$RESOURCE_GROUP" --query fqdns -o tsv)
 IP=$(az vm show -d --name "$VM_NAME" --resource-group "$RESOURCE_GROUP" --query publicIps -o tsv)
 
-# Kafka's external listener. Opened only to the addresses in KAFKA_ALLOWED_IPS: the four
-# App Services' outbound IPs plus the team's own addresses. Never "*".
+# Kafka's external listeners: 9094 for the staging broker, 9095 for the production broker
+# (SCRUM-126). Opened only to the addresses in KAFKA_ALLOWED_IPS: the App Services' outbound IPs
+# plus the team's own addresses. Never "*".
 if [ -n "${KAFKA_ALLOWED_IPS:-}" ]; then
-  echo "== allowing 9094 from: $KAFKA_ALLOWED_IPS"
-  # shellcheck disable=SC2086
-  az network nsg rule create \
-    --resource-group "$RESOURCE_GROUP" --nsg-name "${VM_NAME}NSG" \
-    --name allow-kafka-9094 --priority 1010 \
-    --access Allow --protocol Tcp --direction Inbound \
-    --destination-port-ranges 9094 \
-    --source-address-prefixes $KAFKA_ALLOWED_IPS \
-    --output none
+  for rule in "9094 1010" "9095 1020"; do
+    read -r port priority <<<"$rule"
+    echo "== allowing $port from: $KAFKA_ALLOWED_IPS"
+    # shellcheck disable=SC2086
+    az network nsg rule create \
+      --resource-group "$RESOURCE_GROUP" --nsg-name "${VM_NAME}NSG" \
+      --name "allow-kafka-$port" --priority "$priority" \
+      --access Allow --protocol Tcp --direction Inbound \
+      --destination-port-ranges "$port" \
+      --source-address-prefixes $KAFKA_ALLOWED_IPS \
+      --output none
+  done
 else
-  echo "!! KAFKA_ALLOWED_IPS not set - port 9094 was NOT opened."
+  echo "!! KAFKA_ALLOWED_IPS not set - ports 9094 and 9095 were NOT opened."
   echo "   Re-run with, for example:"
   echo "   KAFKA_ALLOWED_IPS='20.1.2.3 20.1.2.4 <your-home-ip>' $0"
 fi

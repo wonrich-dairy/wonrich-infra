@@ -12,8 +12,8 @@ Apache Kafka is the event bus between the Wonrich microservices. Services publis
 | Dead-letter topic | `wonrich.dlq.<consumer group>.v<version>`, **one per consumer group** |
 | Message key | The business identifier the events relate to (e.g. `batchId`), so events for one entity stay in order |
 | Partitions | 3 on event topics, 1 on dead-letter topics |
-| Retention | 7 days on event topics; dead-letter topics 30 days locally, 7 days on staging |
-| Replication factor | 1 (single broker, locally and on staging) |
+| Retention | 7 days on event topics; dead-letter topics 30 days locally and in production, 7 days on staging |
+| Replication factor | 1 (single broker locally, on staging and in production) |
 | Consumer group | Named after the consuming service and what it consumes; one group per service, never shared |
 | Topic creation | Explicit only (`topics.env`). Automatic topic creation is disabled on the broker |
 
@@ -37,6 +37,7 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 | `wonrich.processing.stage-events.v1` | Processing Service | Processing stage events (incl. run ready for final testing) | `batchId` | 3 | 7 days |
 | `wonrich.processing.hold-events.v1` | Processing Service | Batch hold events | `batchId` | 3 | 7 days |
 | `wonrich.quality-lab.batch-determinations.v1` | Quality Lab Service | `BatchCleared`, `BatchFailed` | `batchId` | 3 | 7 days |
+| `wonrich.intake.consignment-tested.v1` | MCC & Intake Service | `ConsignmentTested` (SCRUM-141) | `batchId` | 3 | 7 days |
 
 `wonrich.quality-lab.batch-determinations.v1` carries both outcomes on one topic. Each message includes an event-type field so consumers can distinguish `BatchCleared` from `BatchFailed`.
 
@@ -48,6 +49,10 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 | `wonrich.dlq.processing-stage-events.v1` | `processing-stage-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.processing-hold-events.v1` | `processing-hold-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.quality-lab-stage-events.v1` | `quality-lab-stage-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.traceability-stage-events.v1` | `traceability-stage-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.traceability-hold-events.v1` | `traceability-hold-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.traceability-batch-determinations.v1` | `traceability-batch-determinations` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.traceability-consignment-tested.v1` | `traceability-consignment-tested` | 1 | 30 days (7 on staging) |
 
 Dead-letter topics have **one partition**: they are low volume and nothing consumes them in order, so partitioning buys nothing.
 
@@ -63,10 +68,17 @@ Retention is longer than the source topic locally, so a failed message is still 
 | `processing-stage-events` | Processing Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.processing-stage-events.v1` |
 | `processing-hold-events` | Processing Service | `wonrich.processing.hold-events.v1` | `wonrich.dlq.processing-hold-events.v1` |
 | `quality-lab-stage-events` | Quality Lab Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.quality-lab-stage-events.v1` |
+| `quality-lab-observability` | Quality Lab Service (monitoring listener) | `wonrich.processing.stage-events.v1` | none: passive, never commits offsets or dead-letters |
+| `traceability-stage-events` | Traceability Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.traceability-stage-events.v1` |
+| `traceability-hold-events` | Traceability Service | `wonrich.processing.hold-events.v1` | `wonrich.dlq.traceability-hold-events.v1` |
+| `traceability-batch-determinations` | Traceability Service | `wonrich.quality-lab.batch-determinations.v1` | `wonrich.dlq.traceability-batch-determinations.v1` |
+| `traceability-consignment-tested` | Traceability Service | `wonrich.intake.consignment-tested.v1` | `wonrich.dlq.traceability-consignment-tested.v1` |
 
 A consumer group is created by the broker the first time a consumer connects with that group ID, locally and on staging. It does not appear in `kafka-consumer-groups.sh --list` until then.
 
-Traceability & QC Dashboard Service consumer groups will be added here when that service's consumers are defined.
+Traceability reads a batch's whole path, so it consumes from three producers: Processing (stage and hold events), Quality Lab (determinations) and MCC & Intake (`ConsignmentTested`, SCRUM-141).
+
+**Retention and rebuilds:** event topics keep 7 days. Rebuilding Traceability's projection (SCRUM-140) replays events from Kafka, so it can only go back 7 days unless retention is raised for those topics.
 
 ---
 
@@ -116,19 +128,27 @@ echo '{"batchId":"WR-2609-0001","stage":"ReadyForFinalTesting"}' | docker exec -
 
 ---
 
-## Hosted broker (staging)
+## Hosted brokers (staging and production)
 
-The deployed services on Azure App Service use a single Kafka broker running on an Azure VM: the same `apache/kafka` image as local development, with an extra listener for clients outside the VM.
+The deployed services on Azure App Service use Kafka brokers running on an Azure VM: the same `apache/kafka` image as local development, with an extra listener for clients outside the VM.
+
+There are **two independent brokers on the same VM**, one per environment (SCRUM-126), so a staging test can never put events into production. They share nothing: separate compose projects, containers, data volumes, Docker networks, cluster IDs and SASL credentials. Topic names are identical (both use `kafka/topics.env`), so only the bootstrap address and password differ between environments and no service code changes.
 
 Azure Event Hubs was considered and ruled out: its Kafka endpoint needs a Standard-tier namespace, which the team's Azure for Students subscription does not include.
 
-| Item | Value |
-|---|---|
-| Host | `wonrich-kafka.southeastasia.cloudapp.azure.com` |
-| VM | `Standard_B2ls_v2`, Southeast Asia |
-| Client listener | `9094`, SASL_PLAINTEXT with SASL/PLAIN |
-| Internal listener | `9092`, PLAINTEXT, reachable only inside the VM's Docker network (used by `kafka-init`) |
-| Topics | Created from `kafka/topics.env` by `kafka-init`, dead-letter retention 7 days |
+| Item | Staging | Production |
+|---|---|---|
+| Host | `wonrich-kafka.southeastasia.cloudapp.azure.com` | same VM |
+| VM | `Standard_B2ls_v2`, Southeast Asia | same VM |
+| Client listener | `9094`, SASL_PLAINTEXT with SASL/PLAIN | `9095`, SASL_PLAINTEXT with SASL/PLAIN |
+| Compose file on the VM | `~/kafka/docker-compose.yml` | `~/kafka/docker-compose.prod.yml` |
+| Compose project | `wonrich-kafka` | `wonrich-kafka-prod` |
+| Containers | `wonrich-kafka`, `wonrich-kafka-init` | `wonrich-kafka-prod`, `wonrich-kafka-prod-init` |
+| Credentials and cluster ID | `~/kafka/.env` | `~/kafka/.env.prod` |
+| Internal listener | `9092`, PLAINTEXT, only inside that broker's Docker network (used by `kafka-init`) | same |
+| Topics | from `kafka/topics.env` | same file |
+| Dead-letter retention | 7 days | 30 days (the design value) |
+| JVM heap | 512 MB | 512 MB |
 
 ### Provisioning
 
@@ -136,11 +156,22 @@ Scripted and repeatable; both scripts are safe to re-run.
 
 ```bash
 az login
-./azure/kafka-vm/provision.sh                 # VM, public IP with DNS name, NSG rules
-./azure/kafka-vm/deploy.sh <vm-fqdn>          # Docker, broker, topics, SASL credentials
+./azure/kafka-vm/provision.sh                     # VM, public IP with DNS name, NSG rules (9094, 9095)
+./azure/kafka-vm/deploy.sh <vm-fqdn>              # staging broker: Docker, broker, topics, SASL credentials
+ENV=prod ./azure/kafka-vm/deploy.sh <vm-fqdn>     # production broker on the same VM
 ```
 
-`deploy.sh` copies `topics.env` and `create-topics.sh` to the VM and starts the broker; `kafka-init` then creates any missing topics and applies retention. Re-run it after changing `topics.env`. On the first run it generates the SASL password and prints it once; it is never stored in this repository.
+`deploy.sh` copies `topics.env` and `create-topics.sh` to the VM and starts the broker; `kafka-init` then creates any missing topics and applies retention. Re-run it after changing `topics.env`, once per environment. On the first run for an environment it generates that broker's SASL password (and, for production, its cluster ID) and prints the password once; it is never stored in this repository.
+
+Before starting the production broker, `deploy.sh` checks the VM's free memory: the staging broker, Prometheus and Grafana use about 1.6 GB, and the second broker needs about 0.8 GB more. It stops if less than 900 MB is available.
+
+Verify both brokers on the VM:
+
+```bash
+ssh azureuser@wonrich-kafka.southeastasia.cloudapp.azure.com
+docker exec wonrich-kafka      /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe
+docker exec wonrich-kafka-prod /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe
+```
 
 To run the topic script from your own machine instead, with a client config file holding the SASL settings:
 
@@ -158,13 +189,15 @@ docker run --rm \
 
 Each service's App Service needs:
 
-| Setting | Value |
-|---|---|
-| `Kafka__BootstrapServers` | `wonrich-kafka.southeastasia.cloudapp.azure.com:9094` |
-| `Kafka__SecurityProtocol` | `SaslPlaintext` |
-| `Kafka__SaslMechanism` | `Plain` |
-| `Kafka__SaslUsername` | `wonrich` |
-| `Kafka__SaslPassword` | Shared privately by DevOps. Never in git, Jira or the group chat |
+| Setting | Staging | Production |
+|---|---|---|
+| `Kafka__BootstrapServers` | `wonrich-kafka.southeastasia.cloudapp.azure.com:9094` | `wonrich-kafka.southeastasia.cloudapp.azure.com:9095` |
+| `Kafka__SecurityProtocol` | `SaslPlaintext` | `SaslPlaintext` |
+| `Kafka__SaslMechanism` | `Plain` | `Plain` |
+| `Kafka__SaslUsername` | `wonrich` | `wonrich` |
+| `Kafka__SaslPassword` | staging password (`~/kafka/.env`) | production password (`~/kafka/.env.prod`), different from staging |
+
+Passwords are shared privately by DevOps. Never in git, Jira, the group chat or screenshots.
 
 ### Access control
 
@@ -178,5 +211,5 @@ Accepted for the case-study environment, which carries no real data. The VM is d
 
 - **No encryption in transit.** SASL_PLAINTEXT authenticates clients but does not encrypt traffic. Follow-up: SASL_SSL.
 - **One shared credential with full rights, no ACLs.** Every service uses the same SASL user, and without an authorizer that user can produce, consume and administer every topic. Follow-up: enable the KRaft `StandardAuthorizer`, one user per service, and ACLs granting each only the topics it produces to and consumes from, the self-hosted equivalent of separate Send and Listen rules.
-- **Port 9094 open to all source addresses**, because App Service outbound IPs are shared and change.
-- **Single broker**, no replication. A VM restart makes the broker unavailable for about a minute; producers retry.
+- **Ports 9094 and 9095 open to all source addresses**, because App Service outbound IPs are shared and change.
+- **Single broker per environment**, no replication, and both on one VM. A VM restart makes both brokers unavailable for about a minute; producers retry.
