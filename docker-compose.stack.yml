@@ -1,0 +1,225 @@
+# The whole Wonrich platform with one command (SCRUM-124):
+#
+#   cp .env.stack.example .env       # then fill in the database passwords and the signing key
+#   docker compose -f docker-compose.stack.yml up -d --build
+#
+# Starts Kafka (with Kafka UI), MCC and Intake, Auth, Processing, Quality Lab, Traceability, the
+# frontend, and the observability stack (Prometheus, Loki, Promtail, Grafana).
+#
+# The repositories must be cloned side by side, with these folder names:
+#
+#   <workspace>/
+#     wonrich-infra/                    <- this repository
+#     mcc-intake-service/
+#     WD-Auth-service/
+#     processing-service/
+#     quality-lab-service/
+#     traceability-dashboard-service/
+#     frontend/
+#
+# There is no database container: every service connects to its database on the remote MySQL server
+# through the connection strings in .env, so nothing here depends on a local database starting.
+name: wonrich
+
+include:
+  # Kafka, its topic creation and Kafka UI, on the shared wonrich-net network.
+  - docker-compose.yml
+
+x-kafka: &kafka-env
+  Kafka__BootstrapServers: "${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
+  Kafka__SecurityProtocol: "${KAFKA_SECURITY_PROTOCOL:-Plaintext}"
+  Kafka__SaslMechanism: "${KAFKA_SASL_MECHANISM:-}"
+  Kafka__SaslUsername: "${KAFKA_SASL_USERNAME:-}"
+  Kafka__SaslPassword: "${KAFKA_SASL_PASSWORD:-}"
+
+x-auth: &auth-env
+  Auth__Issuer: wonrich-auth
+  Auth__Audience: wonrich-services
+  Auth__SigningKey: "${AUTH_SIGNING_KEY:?Set AUTH_SIGNING_KEY in .env}"
+
+services:
+  auth-service:
+    build:
+      context: ../WD-Auth-service
+    container_name: wonrich-auth
+    restart: unless-stopped
+    ports:
+      - "5238:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "${AUTH_DB_CONNECTION:?Set AUTH_DB_CONNECTION in .env}"
+      <<: *auth-env
+      Cors__AllowedOrigins__0: "${FRONTEND_ORIGIN:-http://localhost:5173}"
+    networks: [wonrich-net]
+
+  mcc-intake-service:
+    build:
+      context: ../mcc-intake-service
+    container_name: wonrich-mcc-intake
+    restart: unless-stopped
+    depends_on: [auth-service]
+    ports:
+      - "5237:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "${MCC_DB_CONNECTION:?Set MCC_DB_CONNECTION in .env}"
+      <<: *auth-env
+      Cors__AllowedOrigins__0: "${FRONTEND_ORIGIN:-http://localhost:5173}"
+    networks: [wonrich-net]
+
+  processing-service:
+    build:
+      context: ../processing-service
+    container_name: wonrich-processing
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5210:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "${PROCESSING_DB_CONNECTION:?Set PROCESSING_DB_CONNECTION in .env}"
+      <<: [*auth-env, *kafka-env]
+      Cors__AllowedOrigins__0: "${FRONTEND_ORIGIN:-http://localhost:5173}"
+    networks: [wonrich-net]
+
+  quality-lab-service:
+    build:
+      context: ../quality-lab-service
+    container_name: wonrich-quality-lab
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5003:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__QualityLabDb: "${QLS_DB_CONNECTION:?Set QLS_DB_CONNECTION in .env}"
+      # Read access to Processing's database; without it Quality Lab's processing sync is disabled.
+      ConnectionStrings__ProcessingDb: "${QLS_PROCESSING_DB_CONNECTION:-}"
+      <<: [*auth-env, *kafka-env]
+      Cors__AllowedOrigins__0: "${FRONTEND_ORIGIN:-http://localhost:5173}"
+    networks: [wonrich-net]
+
+  traceability-service:
+    build:
+      context: ../traceability-dashboard-service
+      args:
+        GIT_SHA: "${GIT_SHA:-local}"
+    container_name: wonrich-traceability
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5240:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__TraceabilityDb: "${TRC_DB_CONNECTION:?Set TRC_DB_CONNECTION in .env}"
+      <<: [*auth-env, *kafka-env]
+      Cors__AllowedOrigins__0: "${FRONTEND_ORIGIN:-http://localhost:5173}"
+    networks: [wonrich-net]
+
+  # The frontend has no Dockerfile of its own (it is deployed to Vercel), so it is built here: Vite
+  # bakes the API addresses in at build time, which is how it is "given its URL" for each service.
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_AUTH_API_URL: "${VITE_AUTH_API_URL:-http://localhost:5238}"
+        VITE_INTAKE_API_URL: "${VITE_INTAKE_API_URL:-http://localhost:5237}"
+        VITE_PROCESSING_API_URL: "${VITE_PROCESSING_API_URL:-http://localhost:5210}"
+        VITE_QUALITY_LAB_API_URL: "${VITE_QUALITY_LAB_API_URL:-http://localhost:5003}"
+        VITE_TRACEABILITY_API_URL: "${VITE_TRACEABILITY_API_URL:-http://localhost:5240}"
+      dockerfile_inline: |
+        FROM node:22-alpine AS build
+        WORKDIR /app
+        COPY package*.json ./
+        RUN npm ci
+        COPY . .
+        ARG VITE_AUTH_API_URL
+        ARG VITE_INTAKE_API_URL
+        ARG VITE_PROCESSING_API_URL
+        ARG VITE_QUALITY_LAB_API_URL
+        ARG VITE_TRACEABILITY_API_URL
+        RUN npm run build
+        FROM nginx:1.27-alpine
+        COPY --from=build /app/dist /usr/share/nginx/html
+        RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  location / { try_files $$uri /index.html; }\n}\n' > /etc/nginx/conf.d/default.conf
+    container_name: wonrich-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    networks: [wonrich-net]
+
+  # ── Observability: the same configuration files as processing-service uses on its own ─────────
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: wonrich-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=2GB
+      - --web.enable-lifecycle
+    volumes:
+      - ../processing-service/infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../processing-service/infra/observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - wonrich-prometheus-data:/prometheus
+    extra_hosts:
+      # The services publish their ports on the host; this lets Prometheus scrape them there.
+      - "host.docker.internal:host-gateway"
+    networks: [wonrich-net]
+
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: wonrich-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ../processing-service/infra/observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - wonrich-loki-data:/loki
+    networks: [wonrich-net]
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: wonrich-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yml
+    depends_on: [loki]
+    volumes:
+      - ../processing-service/infra/observability/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - wonrich-promtail-positions:/tmp
+    networks: [wonrich-net]
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: wonrich-grafana
+    restart: unless-stopped
+    depends_on: [prometheus, loki]
+    ports:
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-wonrich-local-only}"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ../processing-service/infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../processing-service/infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - wonrich-grafana-data:/var/lib/grafana
+    networks: [wonrich-net]
+
+volumes:
+  wonrich-prometheus-data:
+  wonrich-loki-data:
+  wonrich-promtail-positions:
+  wonrich-grafana-data:
