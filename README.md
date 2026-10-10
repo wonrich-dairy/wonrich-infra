@@ -18,6 +18,8 @@ This repository holds the infrastructure that every microservice depends on, so 
 ```
 wonrich-infra/
 ├── docker-compose.yml        # Local Kafka broker, topic creation, Kafka UI
+├── docker-compose.stack.yml  # The whole platform, one command
+├── .env.stack.example        # Settings for the stack (copy to .env)
 ├── kafka/
 │   ├── topics.env            # Single definition of every topic
 │   ├── consumer-groups.env   # Consumer group per topic (reference)
@@ -30,6 +32,61 @@ wonrich-infra/
 └── docs/
     └── kafka.md              # Topics, consumer groups, conventions
 ```
+
+---
+
+## The whole platform with one command
+
+`docker-compose.stack.yml` starts everything: Kafka and Kafka UI, MCC and Intake, Auth, Processing, Quality Lab, Traceability, the frontend, and the observability stack (Prometheus, Loki, Promtail, Grafana).
+
+### 1. Clone the repositories side by side
+
+```
+<workspace>/
+  wonrich-infra/                    this repository
+  mcc-intake-service/
+  WD-Auth-service/
+  processing-service/
+  quality-lab-service/
+  traceability-dashboard-service/
+  frontend/
+```
+
+The folder names must match: the stack builds each service from `../<folder>`.
+
+### 2. Configure
+
+```bash
+cd wonrich-infra
+cp .env.stack.example .env       # fill in the database connection strings and the signing key
+```
+
+Every service connects to its database on the remote MySQL server, so there is no database container. The passwords and the signing key come from the DevOps member, privately. `.env` is git-ignored.
+
+### 3. Start
+
+```bash
+docker compose -f docker-compose.stack.yml up -d --build
+docker compose -f docker-compose.stack.yml ps
+```
+
+The first build compiles every service and the frontend, and takes several minutes.
+
+| What | Address |
+|---|---|
+| Frontend | http://localhost:5173 |
+| MCC and Intake | http://localhost:5237 |
+| Auth | http://localhost:5238 |
+| Processing | http://localhost:5210 |
+| Quality Lab | http://localhost:5003 |
+| Traceability | http://localhost:5240 |
+| Kafka UI | http://localhost:8085 |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 |
+
+Stop with `docker compose -f docker-compose.stack.yml down` (add `-v` to delete Kafka and monitoring data).
+
+The services that use Kafka wait for the broker to be healthy before they start. To run only the broker, use `docker compose up -d` as described below.
 
 ---
 
