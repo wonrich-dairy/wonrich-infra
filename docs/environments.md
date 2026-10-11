@@ -31,9 +31,13 @@ Production uses the same Auth service as staging (`wonrich-auth-app`), so every 
 | Traceability | `wonrich-traceability`, https://wonrich-traceability-hhfsh9d4cff6gsd3.southeastasia-01.azurewebsites.net | `wonrich-traceability-prod`, https://wonrich-traceability-prod-hcagaah2exc9frbj.southeastasia-01.azurewebsites.net |
 | Quality Lab | `wonrich-quality-lab`, https://wonrich-quality-lab-bvega5acfkgpb5gx.southeastasia-01.azurewebsites.net | not created yet |
 | Processing | `app-wonrich-processing-staging`, https://app-wonrich-processing-staging.azurewebsites.net | `app-wonrich-processing-prod`, https://app-wonrich-processing-prod.azurewebsites.net |
-| MCC and Intake | `app-mcc-intake-staging`, https://app-mcc-intake-staging.azurewebsites.net | `app-mcc-intake-prod`, https://app-mcc-intake-prod.azurewebsites.net |
+| MCC and Intake | `wonrich-mcc-app-abhgfsaxc6a3eqfa` (Malaysia West), https://wonrich-mcc-app-abhgfsaxc6a3eqfa.malaysiawest-01.azurewebsites.net. This is the app the frontend calls | not created yet. `app-mcc-intake-prod` exists but is an empty placeholder (see below) |
 | Auth | `wonrich-auth-app`, https://wonrich-auth-app-f4dndrgcgzgjb5h4.malaysiawest-01.azurewebsites.net (shared by both environments) | same app |
 | Frontend | https://frontend-phi-sage-81.vercel.app (hosted on Vercel) | same project |
+
+### MCC and Intake apps
+
+`app-mcc-intake-staging` and `app-mcc-intake-prod` exist in Azure but only show the default "Your web app is running and waiting for your content" page: MCC has never been deployed to them. Its pipeline deploys to them on every push to `develop` and fails with `Publish profile is invalid for app-name and slot-name provided`, because the apps do not accept the publish profile stored in the repository's GitHub environments. The MCC API that is actually running is `wonrich-mcc-app-abhgfsaxc6a3eqfa`, which the frontend uses; it returns 401 to a request without a token, and `/health` does not exist yet.
 
 ### How each service deploys
 
