@@ -108,6 +108,9 @@ services:
       context: ../traceability-dashboard-service
       args:
         GIT_SHA: "${GIT_SHA:-local}"
+      # Restore pulls Wonrich.* packages from GitHub Packages. The token reaches the build as a secret, mounted
+      # for the restore step only, never as a build argument that would be baked into the image.
+      secrets: [github_packages_token]
     container_name: wonrich-traceability
     restart: unless-stopped
     depends_on:
@@ -223,3 +226,10 @@ volumes:
   wonrich-loki-data:
   wonrich-promtail-positions:
   wonrich-grafana-data:
+
+secrets:
+  github_packages_token:
+    # Needs a GitHub token with read:packages. Before building:
+    #   gh auth refresh -s read:packages
+    #   export GITHUB_PACKAGES_TOKEN=$(gh auth token)
+    environment: GITHUB_PACKAGES_TOKEN
