@@ -49,6 +49,8 @@ Defined in [`kafka/topics.env`](../kafka/topics.env), the single source of truth
 | `wonrich.dlq.processing-stage-events.v1` | `processing-stage-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.processing-hold-events.v1` | `processing-hold-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.quality-lab-stage-events.v1` | `quality-lab-stage-events` | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.quality-lab-determinations.v1` | Producer-side: Quality Lab events that exhausted outbox retries (SCRUM-24) | 1 | 30 days (7 on staging) |
+| `wonrich.dlq.processing-batch-determinations.v1` | `processing-batch-determinations` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.traceability-stage-events.v1` | `traceability-stage-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.traceability-hold-events.v1` | `traceability-hold-events` | 1 | 30 days (7 on staging) |
 | `wonrich.dlq.traceability-batch-determinations.v1` | `traceability-batch-determinations` | 1 | 30 days (7 on staging) |
@@ -68,6 +70,7 @@ Retention is longer than the source topic locally, so a failed message is still 
 | `processing-stage-events` | Processing Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.processing-stage-events.v1` |
 | `processing-hold-events` | Processing Service | `wonrich.processing.hold-events.v1` | `wonrich.dlq.processing-hold-events.v1` |
 | `quality-lab-stage-events` | Quality Lab Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.quality-lab-stage-events.v1` |
+| `processing-batch-determinations` | Processing Service | `wonrich.quality-lab.batch-determinations.v1` | `wonrich.dlq.processing-batch-determinations.v1` |
 | `quality-lab-observability` | Quality Lab Service (monitoring listener) | `wonrich.processing.stage-events.v1` | none: passive, never commits offsets or dead-letters |
 | `traceability-stage-events` | Traceability Service | `wonrich.processing.stage-events.v1` | `wonrich.dlq.traceability-stage-events.v1` |
 | `traceability-hold-events` | Traceability Service | `wonrich.processing.hold-events.v1` | `wonrich.dlq.traceability-hold-events.v1` |
