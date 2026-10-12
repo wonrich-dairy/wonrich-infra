@@ -72,6 +72,15 @@ docker compose -f docker-compose.stack.yml ps
 
 The first build compiles every service and the frontend, and takes several minutes.
 
+Traceability restores `Wonrich.*` packages from the organisation's GitHub Packages feed, which needs a login even though the repositories are public. Before the first build, give Docker a token with `read:packages`:
+
+```bash
+gh auth refresh -s read:packages
+export GITHUB_PACKAGES_TOKEN=$(gh auth token)
+```
+
+The token is passed to the build as a secret and is not stored in the image. Without it the Traceability build fails at the restore step.
+
 | What | Address |
 |---|---|
 | Frontend | http://localhost:5173 |
